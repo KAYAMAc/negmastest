@@ -11,18 +11,22 @@ from collections import defaultdict, namedtuple
 from typing import TYPE_CHECKING
 
 from negmas import warnings
-
-from ..events import Event
-from ..helpers import TimeoutCaller, TimeoutError, exception2str
-from ..mechanisms import Mechanism, MechanismRoundResult
-from ..outcomes.common import Outcome
-from ..outcomes.outcome_ops import cast_value_types, outcome_types_are_ok
-from .common import ResponseType, SAOResponse, SAOState
+from negmas.events import Event
+#from ..events import Event
+from negmas.helpers import TimeoutCaller, TimeoutError, exception2str
+#from ..helpers import TimeoutCaller, TimeoutError, exception2str
+from negmas.mechanisms import Mechanism, MechanismRoundResult
+#from ..mechanisms import Mechanism, MechanismRoundResult
+from negmas.outcomes.common import Outcome
+#from ..outcomes.common import Outcome
+from negmas.outcomes.outcome_ops import cast_value_types, outcome_types_are_ok
+#from ..outcomes.outcome_ops import cast_value_types, outcome_types_are_ok
+from negmas.sao.common import ResponseType, SAOResponse, SAOState
 
 if TYPE_CHECKING:
     from negmas.preferences import Preferences
-
-    from .negotiators import SAONegotiator
+    from negmas.negotiators import SAONegoitator
+    #from .negotiators import SAONegotiator
 
 __all__ = [
     "SAOMechanism",
@@ -158,8 +162,8 @@ class SAOMechanism(Mechanism):
         role: str | None = None,
         **kwargs,
     ) -> bool | None:
-        from ..genius.negotiator import GeniusNegotiator
-
+        #from ..genius.negotiator import GeniusNegotiator
+        from negmas.genius.negotiator import GeniusNegotiator
         added = super().add(negotiator, preferences=preferences, role=role, **kwargs)
         if (
             added
