@@ -153,6 +153,8 @@ class SAOMechanism(Mechanism):
         self._waiting_time: dict[str, float] = defaultdict(float)
         self._waiting_start: dict[str, float] = defaultdict(lambda: float("inf"))
         self._selected_first = 0
+        self.partial_agreement=True
+        self.partial_ind=-1
 
     def add(
         self,
@@ -207,6 +209,8 @@ class SAOMechanism(Mechanism):
     def round(self) -> MechanismRoundResult:
         """implements a round of the Stacked Alternating Offers Protocol."""
         state = self._current_state
+        self.partial_agreement = True
+        self.nmi.partial_agreement = 0
         if self._frozen_neg_list is None:
             state.new_offers = []
         negotiators: list[SAONegotiator] = self.negotiators
@@ -238,7 +242,8 @@ class SAOMechanism(Mechanism):
                     if (
                         negotiator == self._current_proposer
                     ) and self._offering_is_accepting:
-                        state.n_acceptances = 0
+                        #state.n_acceptances = 0
+                        #state.n_acceptances = 1
                         response = negotiator.counter(*args, **kwargs)
                     else:
                         response = negotiator.counter(*args, **kwargs)
@@ -269,7 +274,8 @@ class SAOMechanism(Mechanism):
                     if (
                         negotiator == self._current_proposer
                     ) and self._offering_is_accepting:
-                        state.n_acceptances = 0
+                        #state.n_acceptances = 0
+                        #state.n_acceptances = 1
                         response = TimeoutCaller.run(fun, timeout=timeout)
                     else:
                         response = TimeoutCaller.run(fun, timeout=timeout)
@@ -342,6 +348,7 @@ class SAOMechanism(Mechanism):
                     exceptions=exceptions,
                 )
         # if this is the first step (or no one has offered yet) which means that there is no _current_offer
+        # not used currently
         if (
             state.current_offer is None
             and n_proposers > 1
@@ -476,7 +483,8 @@ class SAOMechanism(Mechanism):
             state.new_offers.append((neg.id, resp.outcome))
             self._current_proposer = neg
             state.current_proposer = neg.id
-            state.n_acceptances = 1 if self._offering_is_accepting else 0
+            #state.n_acceptances = 1 if self._offering_is_accepting else 0
+            state.n_acceptances = 1
             if self._last_checked_negotiator >= 0:
                 state.last_negotiator = self.negotiators[
                     self._last_checked_negotiator
@@ -506,162 +514,202 @@ class SAOMechanism(Mechanism):
                 (_ + self._last_checked_negotiator + 1) % n_negotiators
                 for _ in range(n_negotiators)
             ]
-
-        for _, neg_indx in enumerate(ordered_indices):
-            self._last_checked_negotiator = neg_indx
-            neg = self.negotiators[neg_indx]
+        while self.partial_agreement==True:
             strt = time.perf_counter()
-            resp, has_exceptions = _safe_counter(
-                neg, state=self.state, offer=state.current_offer
-            )
-            if has_exceptions:
-                return MechanismRoundResult(
-                    broken=True,
-                    timedout=False,
-                    agreement=None,
-                    times=times,
-                    exceptions=exceptions,
-                    error=True,
-                    error_details=str(exceptions[neg.id]),
+            state.current_offer=None
+            for _, neg_indx in enumerate(ordered_indices):
+                self._last_checked_negotiator = neg_indx
+                neg = self.negotiators[neg_indx]
+                resp, has_exceptions = _safe_counter(
+                    neg, state=self.state, offer=state.current_offer
                 )
-            if resp is None:
-                return MechanismRoundResult(
-                    broken=False,
-                    timedout=True,
-                    agreement=None,
-                    times=times,
-                    exceptions=exceptions,
-                    error=False,
-                    error_details="",
-                )
-            if resp.response == ResponseType.WAIT:
-                self._waiting_start[neg.id] = min(self._waiting_start[neg.id], strt)
-                self._waiting_time[neg.id] += time.perf_counter() - strt
-                self._last_checked_negotiator = (neg_indx - 1) % n_negotiators
-                offered = {self._negotiator_index[_[0]] for _ in state.new_offers}
-                did_not_offer = sorted(
-                    list(set(range(n_negotiators)).difference(offered))
-                )
-                assert neg_indx in did_not_offer
-                indx = did_not_offer.index(neg_indx)
-                assert (
-                    self._frozen_neg_list is None
-                    or self._frozen_neg_list[0] == neg_indx
-                )
-                self._frozen_neg_list = did_not_offer[indx:] + did_not_offer[:indx]
-                self._n_waits += 1
-            else:
-                self._stop_waiting(neg.id)
-
-            if resp is None:
-                return MechanismRoundResult(
-                    broken=False,
-                    timedout=True,
-                    agreement=None,
-                    times=times,
-                    exceptions=exceptions,
-                )
-            if time.perf_counter() - strt > self.nmi.step_time_limit:
-                return MechanismRoundResult(
-                    broken=False,
-                    timedout=True,
-                    agreement=None,
-                    times=times,
-                    exceptions=exceptions,
-                )
-            if self._extra_callbacks:
-                if state.current_offer is not None:
-                    for other in self.negotiators:
-                        if other is not neg:
-                            other.on_partner_response(
-                                state=self.state,
-                                partner_id=neg.id,
-                                outcome=state.current_offer,
-                                response=resp.response,
-                            )
-            if resp.response == ResponseType.NO_RESPONSE:
-                continue
-            if resp.response == ResponseType.WAIT:
-                if self._n_waits > self._n_max_waits:
-                    self._stop_waiting(neg.id)
+                if has_exceptions:
+                    return MechanismRoundResult(
+                        broken=True,
+                        timedout=False,
+                        agreement=None,
+                        times=times,
+                        exceptions=exceptions,
+                        error=True,
+                        error_details=str(exceptions[neg.id]),
+                    )
+                if resp is None:
                     return MechanismRoundResult(
                         broken=False,
                         timedout=True,
                         agreement=None,
-                        waiting=False,
                         times=times,
                         exceptions=exceptions,
+                        error=False,
+                        error_details="",
                     )
-                return MechanismRoundResult(
-                    broken=False,
-                    timedout=False,
-                    agreement=None,
-                    waiting=True,
-                    times=times,
-                    exceptions=exceptions,
-                )
-            if resp.response == ResponseType.END_NEGOTIATION:
-                return MechanismRoundResult(
-                    broken=True,
-                    timedout=False,
-                    agreement=None,
-                    times=times,
-                    exceptions=exceptions,
-                )
-            if resp.response == ResponseType.ACCEPT_OFFER:
-                state.n_acceptances += 1
-                if state.n_acceptances == n_negotiators:
+                if resp.response == ResponseType.WAIT:
+                    self._waiting_start[neg.id] = min(self._waiting_start[neg.id], strt)
+                    self._waiting_time[neg.id] += time.perf_counter() - strt
+                    self._last_checked_negotiator = (neg_indx - 1) % n_negotiators
+                    offered = {self._negotiator_index[_[0]] for _ in state.new_offers}
+                    did_not_offer = sorted(
+                        list(set(range(n_negotiators)).difference(offered))
+                    )
+                    assert neg_indx in did_not_offer
+                    indx = did_not_offer.index(neg_indx)
+                    assert (
+                        self._frozen_neg_list is None
+                        or self._frozen_neg_list[0] == neg_indx
+                    )
+                    self._frozen_neg_list = did_not_offer[indx:] + did_not_offer[:indx]
+                    self._n_waits += 1
+                else:
+                    self._stop_waiting(neg.id)
+
+                if resp is None:
                     return MechanismRoundResult(
                         broken=False,
-                        timedout=False,
-                        agreement=state.current_offer,
+                        timedout=True,
+                        agreement=None,
                         times=times,
                         exceptions=exceptions,
                     )
-            if resp.response == ResponseType.REJECT_OFFER:
-                proposal = resp.outcome
-                if (
-                    not self.allow_offering_just_rejected_outcome
-                    and proposal == state.current_offer
-                ):
-                    proposal = None
-                if proposal is None:
-                    if (
-                        neg.capabilities.get("propose", True)
-                        and self.end_negotiation_on_refusal_to_propose
-                    ):
+                if time.perf_counter() - strt > self.nmi.step_time_limit:
+                    return MechanismRoundResult(
+                        broken=False,
+                        timedout=True,
+                        agreement=None,
+                        times=times,
+                        exceptions=exceptions,
+                    )
+                if self._extra_callbacks:
+                    if state.current_offer is not None:
+                        for other in self.negotiators:
+                            if other is not neg:
+                                other.on_partner_response(
+                                    state=self.state,
+                                    partner_id=neg.id,
+                                    outcome=state.current_offer,
+                                    response=resp.response,
+                                )
+                if resp.response == ResponseType.NO_RESPONSE:
+                    continue
+                if resp.response == ResponseType.WAIT:
+                    if self._n_waits > self._n_max_waits:
+                        self._stop_waiting(neg.id)
                         return MechanismRoundResult(
-                            broken=True,
-                            timedout=False,
+                            broken=False,
+                            timedout=True,
                             agreement=None,
+                            waiting=False,
                             times=times,
                             exceptions=exceptions,
                         )
-                    state.n_acceptances = 0
-                else:
-                    state.n_acceptances = 1 if self._offering_is_accepting else 0
-                    if self._extra_callbacks:
-                        for other in self.negotiators:
-                            if other is neg:
-                                continue
-                            other.on_partner_proposal(
-                                partner_id=neg.id, offer=proposal, state=self.state
+                    return MechanismRoundResult(
+                        broken=False,
+                        timedout=False,
+                        agreement=None,
+                        waiting=True,
+                        times=times,
+                        exceptions=exceptions,
+                    )
+                if resp.response == ResponseType.END_NEGOTIATION:
+                    return MechanismRoundResult(
+                        broken=True,
+                        timedout=False,
+                        agreement=None,
+                        times=times,
+                        exceptions=exceptions,
+                    )
+                if resp.response == ResponseType.ACCEPT_OFFER:
+                    state.n_acceptances += 1
+                    if state.n_acceptances == n_negotiators:
+                        return MechanismRoundResult(
+                            broken=False,
+                            timedout=False,
+                            agreement=state.current_offer,
+                            times=times,
+                            exceptions=exceptions,
+                        )
+                if resp.response == ResponseType.REJECT_OFFER:
+                    proposal = resp.outcome
+                    if (
+                        not self.allow_offering_just_rejected_outcome
+                        and proposal == state.current_offer
+                    ):
+                        proposal = None
+                    if proposal is None:
+                        if (
+                            neg.capabilities.get("propose", True)
+                            and self.end_negotiation_on_refusal_to_propose
+                        ):
+                            return MechanismRoundResult(
+                                broken=True,
+                                timedout=False,
+                                agreement=None,
+                                times=times,
+                                exceptions=exceptions,
                             )
-                state.current_offer = proposal
-                self._current_proposer = neg
-                state.current_proposer = neg.id
-                state.new_offers.append((neg.id, proposal))
-                if self._last_checked_negotiator >= 0:
-                    state.last_negotiator = self.negotiators[
-                        self._last_checked_negotiator
-                    ].name
-                else:
-                    state.last_negotiator = ""
-                (
-                    self._current_proposer_agent,
-                    state.new_offerer_agents,
-                ) = self._agent_info()
-
+                        #state.n_acceptances = 0
+                        #state.n_acceptances = 1
+                    else:
+                        #if self._offering_is_accepting and self.partial_agreement == False:
+                        #    state.n_acceptances = 1
+                        #state.n_acceptances = 1 if self._offering_is_accepting and self.partial_agreement==False else 0
+                        if self._extra_callbacks:
+                            for other in self.negotiators:
+                                if other is neg:
+                                    continue
+                                other.on_partner_proposal(
+                                    partner_id=neg.id, offer=proposal, state=self.state
+                                )
+                    state.current_offer = proposal
+                    self._current_proposer = neg
+                    state.current_proposer = neg.id
+                    state.new_offers.append((neg.id, proposal))
+                    if self._last_checked_negotiator >= 0:
+                        state.last_negotiator = self.negotiators[
+                            self._last_checked_negotiator
+                        ].name
+                    else:
+                        state.last_negotiator = ""
+                    (
+                        self._current_proposer_agent,
+                        state.new_offerer_agents,
+                    ) = self._agent_info()
+                if resp.response==ResponseType.PARTIAL_AGREEMENT:
+                    state.n_acceptances += 1
+                    #n_issue_divided=state.n_acceptances+1
+                    if state.n_acceptances == 3:
+                        self.partial_agreement = False
+                        if self.partial_ind==len(state.current_offer)-1:
+                            #self.nmi.partial_offer[0:self.partial_ind].append(state.current_offer[self.partial_ind])
+                            #po=self.nmi.partial_offer
+                            #agreement=po
+                            agreement=self.nmi.partial_offer
+                            agreement[self.partial_ind]=state.current_offer[self.partial_ind]
+                            #agreement=self.nmi.partial_offer[0:self.partial_ind]+list(state.current_offer[self.partial_ind])
+                        else:
+                            #self.nmi.partial_offer[0:self.partial_ind].append(state.current_offer[self.partial_ind])
+                            #po=self.nmi.partial_offer
+                            #if self.nmi.partial_offer[self.partial_ind + 1:]:
+                            #    po+=self.nmi.partial_offer[self.partial_ind + 1:]
+                            agreement = self.nmi.partial_offer
+                            agreement[self.partial_ind] = state.current_offer[self.partial_ind]
+                            #agreement = self.nmi.partial_offer[0:self.partial_ind] + list(state.current_offer[self.partial_ind]) \
+                            #             + self.nmi.partial_offer[self.partial_ind + 1:]
+                        self.partial_ind = -1
+                        self.nmi.partial_offer = []
+                        self.nmi.partial_agreement = 0
+                        return MechanismRoundResult(
+                            broken=False,
+                            timedout=False,
+                            agreement=tuple(agreement),
+                            times=times,
+                            exceptions=exceptions,
+                        )
+                    self.partial_ind = state.current_offer.index(9527)
+                    #partial_offer = list(state.current_offer)
+                    self.nmi.partial_offer = list(state.current_offer)
+                    self.partial_agreement=True
+                    self.nmi.partial_agreement=1
+            ordered_indices=list(reversed(ordered_indices))
         return MechanismRoundResult(
             broken=False,
             timedout=False,
